@@ -120,7 +120,10 @@ def _seed_rules(db) -> None:
 
 
 def _seed_snapshots(db, sources: dict[str, SourceSystem]) -> int:
+    from src.services.retraction_service import retracted_keys
+
     dataset = build_dataset()
+    retracted = retracted_keys(db)
     inserted = 0
     for row in dataset["snapshots"]:
         source = sources.get(row["source_code"])
@@ -135,14 +138,20 @@ def _seed_snapshots(db, sources: dict[str, SourceSystem]) -> int:
         ).scalar_one_or_none()
         if exists is not None:
             continue
+        attributes = row["attributes"]
+        if row["business_key"] in retracted:
+            # 迟到的 seed 快放同样不得把已撤回客户的个人信息写回库里。
+            from src.services.privacy import mask_attributes
+
+            attributes = mask_attributes(attributes)
         db.add(
             CustomerSnapshot(
                 source_id=source.id,
                 source_code=row["source_code"],
                 business_key=row["business_key"],
                 snapshot_date=row["snapshot_date"],
-                attributes=row["attributes"],
-                row_hash=stable_hash(row["attributes"]),
+                attributes=attributes,
+                row_hash=stable_hash(attributes),
                 ingested_at=row["ingested_at"],
                 is_late=row["is_late"],
                 batch_tag=row["batch_tag"],

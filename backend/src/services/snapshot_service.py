@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from src.models.customer_snapshot import CustomerSnapshot
 from src.models.source_system import SourceSystem
+from src.services import privacy
 
 
 def feed_summary(db: Session) -> dict:
@@ -37,6 +38,7 @@ def feed_summary(db: Session) -> dict:
 
 def recent_rows(db: Session, limit: int = 20) -> list[dict]:
     sources = {source.id: source for source in db.execute(select(SourceSystem)).scalars().all()}
+    retracted = privacy.confirmed_retraction_keys(db)
     rows = db.execute(select(CustomerSnapshot).order_by(CustomerSnapshot.id.desc()).limit(limit)).scalars().all()
     return [
         {
@@ -45,7 +47,7 @@ def recent_rows(db: Session, limit: int = 20) -> list[dict]:
             "source_name": sources[row.source_id].name if row.source_id in sources else row.source_code,
             "business_key": row.business_key,
             "snapshot_date": row.snapshot_date.isoformat(),
-            "attributes": row.attributes,
+            "attributes": privacy.redact_if_retracted(row.attributes, row.business_key, retracted),
             "ingested_at": row.ingested_at.isoformat(sep=" ", timespec="minutes"),
             "is_late": row.is_late,
             "batch_tag": row.batch_tag,

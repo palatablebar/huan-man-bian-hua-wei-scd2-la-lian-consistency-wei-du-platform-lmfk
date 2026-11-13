@@ -69,3 +69,5 @@ ATTRIBUTES: list[dict] = [
 
 ATTRIBUTE_KEYS = tuple(attribute["key"] for attribute in ATTRIBUTES)
 CHANGE_EXCLUDED_ATTRS = ("channel",)
+# 客户注销撤回时统一隐藏的个人字段（姓名 / 手机号 / 归属机构）。
+PERSONAL_ATTRIBUTE_KEYS = ("full_name", "mobile", "org_code")

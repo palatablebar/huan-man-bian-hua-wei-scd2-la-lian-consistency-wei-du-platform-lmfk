@@ -221,6 +221,9 @@ def _upsert_conflicts(db: Session, detected, source_names: dict[str, str], run_i
 
 
 def _chain_keys(db: Session, run_id: int) -> dict[tuple, dict]:
+    from src.services import privacy
+
+    retracted = privacy.confirmed_retraction_keys(db)
     rows = db.execute(select(DimCustomer).where(DimCustomer.build_run_id == run_id)).scalars().all()
     return {
         (row.business_key, row.valid_from): {
@@ -230,7 +233,7 @@ def _chain_keys(db: Session, run_id: int) -> dict[tuple, dict]:
             "version": row.version,
             "version_source": row.version_source,
             "change_fields": row.change_fields,
-            "attributes": row.attributes,
+            "attributes": privacy.redact_if_retracted(row.attributes, row.business_key, retracted),
         }
         for row in rows
     }
@@ -257,6 +260,8 @@ def _diff_against(previous_id: int | None, current_id: int, db: Session) -> dict
 
 
 def execute_run(db: Session, run_id: int) -> dict:
+    from src.services.retraction_service import apply_build_guards
+
     run = db.get(BuildRun, run_id)
     if run is None:
         return {"ok": False, "error": "run not found"}
@@ -265,7 +270,7 @@ def execute_run(db: Session, run_id: int) -> dict:
     db.commit()
     try:
         rules = _rules(db)
-        snapshots = _snapshots(db)
+        snapshots = apply_build_guards(db, _snapshots(db))
         overrides = _overrides(db)
         sources = {row.code: row for row in db.execute(select(SourceSystem)).scalars().all()}
         display_names = {rule.key: (rule.key) for rule in rules}

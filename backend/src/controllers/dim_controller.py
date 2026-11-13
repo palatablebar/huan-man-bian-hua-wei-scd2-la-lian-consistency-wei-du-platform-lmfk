@@ -4,7 +4,7 @@ from fastapi import Response
 from sqlalchemy.orm import Session
 
 from src.constants.customer_attribute import ATTRIBUTES
-from src.services import dim_service
+from src.services import dim_service, privacy
 from src.utils.csv_export import to_csv
 from src.utils.pagination import pagination
 
@@ -27,22 +27,25 @@ def as_of(db: Session, as_of_date: str, search: str = "", level: str = "", page:
 def export_as_of(db: Session, as_of_date: str) -> Response:
     parsed = date.fromisoformat(as_of_date)
     rows = dim_service.as_of_rows(db, parsed)
-    payload = [
-        {
-            "business_key": row.business_key,
-            "full_name": (row.attributes or {}).get("full_name", ""),
-            "mobile": (row.attributes or {}).get("mobile", ""),
-            "org_code": (row.attributes or {}).get("org_code", ""),
-            "customer_level": (row.attributes or {}).get("customer_level", ""),
-            "city": (row.attributes or {}).get("city", ""),
-            "channel": (row.attributes or {}).get("channel", ""),
-            "valid_from": row.valid_from.isoformat(),
-            "valid_to": row.valid_to.isoformat() if row.valid_to else "",
-            "version": row.version,
-            "version_source": row.version_source,
-        }
-        for row in rows
-    ]
+    retracted = privacy.confirmed_retraction_keys(db)
+    payload = []
+    for row in rows:
+        attributes = privacy.redact_if_retracted(row.attributes, row.business_key, retracted)
+        payload.append(
+            {
+                "business_key": row.business_key,
+                "full_name": attributes.get("full_name", ""),
+                "mobile": attributes.get("mobile", ""),
+                "org_code": attributes.get("org_code", ""),
+                "customer_level": attributes.get("customer_level", ""),
+                "city": attributes.get("city", ""),
+                "channel": attributes.get("channel", ""),
+                "valid_from": row.valid_from.isoformat(),
+                "valid_to": row.valid_to.isoformat() if row.valid_to else "",
+                "version": row.version,
+                "version_source": row.version_source,
+            }
+        )
     csv_text = to_csv(DIM_COLUMNS, payload)
     filename = f"scdchain_asof_{parsed.isoformat()}.csv"
     return Response(

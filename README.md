@@ -21,7 +21,7 @@
 
 密码统一 `Demo@2026`。权限在后端中间件 + 路由依赖双重生效（直接 curl 低权接口同样 403）。
 
-## 3. 六条核心实体
+## 3. 八条核心实体
 
 | 实体 | 表 | 说明 |
 |---|---|---|
@@ -31,6 +31,8 @@
 | `MergeRule` | `merge_rules` | 属性级合并策略：源优先级、归一化方式、忽略列标记 |
 | `BuildRun` | `build_runs` | 构建批次：统计、四项不变量报告、输入指纹、对比基线 |
 | `ConflictItem` | `conflict_items` | 跨源冲突候选、归一化裁决、人工覆盖留痕（自然键 `business_key + attribute_key`） |
+| `RetractionBatch` | `retraction_batches` | 客户注销撤回批次（每业务键一条）：待确认影响清单 → 已生效 / 撤回失败 |
+| `RetractionBackup` | `retraction_backups` | 撤回前原值备份，失败时恢复上一可用版本（成功后仅留幂等占位行） |
 
 每个实体都贯穿：表 → model → schema → service → controller → route → 前端 api → store → 页面/组件。
 
@@ -56,7 +58,7 @@
 
 seed 产出 `24` 条冲突候选：14 条归一后一致（手机号 9 / 机构编码 5）、4 条姓名同音、6 条真实冲突（3 条等级 / 3 条机构）。
 
-## 5. 六个页面
+## 5. 七个页面
 
 1. **登录**（编年史封面 + 三账号快捷填充）
 2. **维度设计** `/dimensions`：合并规则台账（优先级上移/下移、归一化、忽略列），源系统登记、上游快照接入
@@ -64,6 +66,10 @@ seed 产出 `24` 条冲突候选：14 条归一后一致（手机号 9 / 机构�
 4. **当前维度** `/dims/current`：当前链台账、等级分布、编年提示、客户编年抽屉
 5. **时点回溯** `/dims/as-of`：横向时间轴选日期、当时有效链、旧值验证、导出 CSV
 6. **冲突裁决** `/conflicts`：待裁决/全部切换、候选来源对比、归一化裁决、人工覆盖留痕、校验报告
+7. **注销撤回** `/retractions`：按业务键建立撤回批次、待确认影响清单、确认后全链路隐藏个人字段、失败恢复上一可用版本
+
+> 撤回语义（客户注销）：**先生成待确认影响清单**，确认后才把当前维度、历史回溯（含编年抽屉）、时点导出、原始快照与冲突候选中的姓名 / 手机号 / 归属机构替换为 `***`。
+> 匿名业务键（链号）、链条计数与审计日志一律保留；同一客户重复撤回只复用同一批次，不新增记录；撤回失败自动回滚，迟到快照重放也不会复活已撤回客户。
 
 ## 6. 快速启动
 
@@ -113,9 +119,10 @@ cd frontend && npm install && npm run dev   # 开发时请把 /api 代理到 192
 gb-572/
 ├── backend/
 │   ├── src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}
-│   ├── src/algorithms/{scd2.py,conflict_merge.py,normalization.py}   # 纯函数、可离线验证
-│   ├── src/services/fixture.py                                      # 确定性演示数据
+│   ├── src/algorithms/{scd2.py,conflict_merge.py,normalization.py,retraction.py}  # 纯函数、可离线验证
+│   ├── src/services/{fixture.py,privacy.py,retraction_service.py}   # 演示数据 / 脱敏 / 撤回
 │   ├── scripts/seed_demo.py                                         # 幂等 seed
+│   ├── tests/test_retraction.py                                     # 撤回 / 幂等 / 恢复 / 迟到快照
 │   └── migrations/                                                  # DDL 快照 + 说明
 ├── worker/{Dockerfile,entrypoint.sh,healthy.py}
 ├── frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants,styles}
@@ -143,6 +150,8 @@ gb-572/
 | 构建状态 `pending/running/succeeded/failed` | `backend/src/constants/build_status.py` | `frontend/src/constants/buildStatus.ts` |
 | 冲突状态/裁决策略 | `backend/src/constants/conflict_status.py` | `frontend/src/constants/conflictStatus.ts` |
 | 归一化策略 `direct/phone_digits/org_code_map/name_homophone` | `backend/src/constants/normalization.py` | `frontend/src/constants/conflictStatus.ts`（`NORMALIZATION_LABELS`） |
+| 撤回状态 `pending/confirmed/failed` | `backend/src/constants/retraction_status.py` | `frontend/src/constants/retractionStatus.ts` |
+| 个人字段 `full_name/mobile/org_code` | `backend/src/constants/customer_attribute.py`（`PERSONAL_ATTRIBUTE_KEYS`） | `frontend/src/constants/retractionStatus.ts`（`PERSONAL_FIELD_LABELS`） |
 
 ## 12. 视觉
 
@@ -153,6 +162,8 @@ gb-572/
 - 演示数据固定为 180 业务键 × 5 天；真实客户维度规模需调整 `fixture.py` 与分页。
 - 姓名同音使用内置轻量拼音表（覆盖演示用字），非常用字回退为原字符。
 - 构建为全量重建模式（`mode=full`），增量会话级 merge 未实现。
+- 注销撤回是**按业务键**的精确匹配（不按姓名 / 手机号模糊匹配），避免误伤同名客户。
+- 撤回成功后备份表仅保留幂等占位行（原始个人信息不落盘留痕）；撤回失败时保留原值供恢复。
 - 更多细节见 `test-artifacts/gb-572/TESTING.md`。
 
 ## License

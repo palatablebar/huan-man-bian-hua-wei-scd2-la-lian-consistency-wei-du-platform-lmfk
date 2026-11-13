@@ -29,6 +29,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
 from .normalization import canonical_value
+from .retraction import PERSONAL_ATTRIBUTE_KEYS, REDACTED_VALUE
 
 DAY = timedelta(days=1)
 
@@ -49,6 +50,9 @@ class Snapshot:
     attributes: dict[str, Any]
     ingested_at: datetime
     trust: int = 0
+    # A retired customer keeps its anonymous chain, but no snapshot row — late
+    # or otherwise — may contribute personal values back into the chain.
+    is_retracted: bool = False
 
 
 @dataclass
@@ -96,6 +100,10 @@ def _golden_attributes(group: list[Snapshot], rules: Iterable[AttributeRule]) ->
             value = canonical_value(rule.normalization, raw)
             break
         golden[rule.key] = value
+    if any(row.is_retracted for row in group):
+        for key in PERSONAL_ATTRIBUTE_KEYS:
+            if key in golden:
+                golden[key] = REDACTED_VALUE
     return golden
 
 
@@ -140,7 +148,12 @@ def derive_versions(
             )
             continue
         current = versions[-1]
+        # 已注销客户：个人字段的任何「变化」（含迟到快照复活）都不再开新链，
+        # 匿名链号与等级 / 机构等非个人字段的历史照常保留。
+        retracted_day = any(row.is_retracted for row in by_date[day])
         changed = _changed_fields(current.attributes, attributes, rules)
+        if retracted_day:
+            changed = [key for key in changed if key not in PERSONAL_ATTRIBUTE_KEYS]
         if not changed:
             continue
         current.valid_to = day

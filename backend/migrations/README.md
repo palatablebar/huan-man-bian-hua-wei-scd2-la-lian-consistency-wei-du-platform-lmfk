@@ -8,6 +8,9 @@ fresh `docker compose up` needs no manual migration step.
 (PostgreSQL 16) for review / offline provisioning. It is written to be re-runnable
 and matches the models under `src/models/`.
 
+`20261113_0002_retraction.sql` adds the customer-deregistration retraction tables
+(also created idempotently by `create_all()` on boot).
+
 | table | 说明 |
 |---|---|
 | `users` | 三角色演示账号（admin / modeler / auditor） |
@@ -17,4 +20,6 @@ and matches the models under `src/models/`.
 | `dim_customers` | SCD2 拉链版本（按 build_run 隔离，唯一 current 部分索引） |
 | `build_runs` | 每次构建批次的统计与不变量报告 |
 | `conflict_items` | 跨源冲突候选、归一化裁决与人工留痕 |
+| `retraction_batches` | 客户注销撤回批次（待确认 → 已生效 / 撤回失败），影响清单 JSONB |
+| `retraction_backups` | 撤回前原值备份，用于失败后恢复上一可用版本 |
 | `audit_logs` | 横切审计日志 |

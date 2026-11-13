@@ -12,6 +12,7 @@ const pages = [
   { num: 'III', label: '当前维度', path: '/dims/current' },
   { num: 'IV', label: '时点回溯', path: '/dims/as-of' },
   { num: 'V', label: '冲突裁决', path: '/conflicts' },
+  { num: 'VI', label: '注销撤回', path: '/retractions' },
 ];
 
 function logout() {

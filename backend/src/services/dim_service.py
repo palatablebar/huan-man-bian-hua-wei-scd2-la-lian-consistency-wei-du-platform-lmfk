@@ -13,7 +13,7 @@ from src.models.build_run import BuildRun
 from src.models.conflict_item import ConflictItem
 from src.models.customer_snapshot import CustomerSnapshot
 from src.models.dim_customer import DimCustomer
-from src.services import build_service
+from src.services import build_service, privacy
 from src.utils.pagination import Pagination, as_page
 
 DIM_COLUMNS = ("business_key", "full_name", "mobile", "org_code", "customer_level", "city", "channel")
@@ -23,8 +23,10 @@ def _latest_run(db: Session) -> BuildRun | None:
     return build_service.latest_run(db)
 
 
-def _row_payload(row: DimCustomer) -> dict:
+def _row_payload(row: DimCustomer, retracted_keys: set[str] | None = None) -> dict:
     attributes = row.attributes or {}
+    if retracted_keys and row.business_key in retracted_keys:
+        attributes = privacy.mask_attributes(attributes)
     return {
         "business_key": row.business_key,
         "version": row.version,
@@ -77,7 +79,8 @@ def current_dims(db: Session, search: str, level: str, pagination: Pagination) -
         .group_by(DimCustomer.attributes["customer_level"].astext)
     ).all()
     distribution = {level_name or "未知": int(count) for level_name, count in distribution_rows}
-    payload = as_page([_row_payload(row) for row in rows], int(total), pagination)
+    keys = privacy.confirmed_retraction_keys(db)
+    payload = as_page([_row_payload(row, keys) for row in rows], int(total), pagination)
     payload.update({"run": build_service.run_payload(run), "level_distribution": distribution})
     return payload
 
@@ -105,7 +108,8 @@ def as_of_query(db: Session, as_of: date, search: str, level: str, pagination: P
             DimCustomer.valid_from == as_of + timedelta(days=1),
         )
     ).scalar() or 0
-    payload = as_page([_row_payload(row) for row in rows], int(total), pagination)
+    keys = privacy.confirmed_retraction_keys(db)
+    payload = as_page([_row_payload(row, keys) for row in rows], int(total), pagination)
     payload.update(
         {
             "run": build_service.run_payload(run),
@@ -165,11 +169,15 @@ def history(db: Session, business_key: str) -> dict:
     )
     if not versions and not snapshots:
         raise HTTPException(status_code=404, detail="客户业务键不存在")
-    return {
-        "business_key": business_key,
-        "run": build_service.run_payload(run),
-        "versions": [_row_payload(row) for row in versions],
-        "conflicts": [
+    retracted = privacy.confirmed_retraction_keys(db)
+    is_retracted = business_key in retracted
+    masked_snapshots = [privacy.redact_if_retracted(row.attributes, business_key, retracted) for row in snapshots]
+    conflict_payload = []
+    for row in conflicts:
+        candidates, resolution = row.candidates, row.resolution
+        if is_retracted:
+            candidates, resolution = privacy.mask_conflict_item(row.attribute_key, candidates, resolution)
+        conflict_payload.append(
             {
                 "id": row.id,
                 "attribute_key": row.attribute_key,
@@ -177,21 +185,26 @@ def history(db: Session, business_key: str) -> dict:
                 "status": row.status,
                 "verdict": row.verdict,
                 "similarity": row.similarity,
-                "candidates": row.candidates,
-                "resolution": row.resolution,
+                "candidates": candidates,
+                "resolution": resolution,
             }
-            for row in conflicts
-        ],
+        )
+    return {
+        "business_key": business_key,
+        "run": build_service.run_payload(run),
+        "versions": [_row_payload(row, retracted) for row in versions],
+        "conflicts": conflict_payload,
         "snapshots": [
             {
                 "source_code": row.source_code,
                 "snapshot_date": row.snapshot_date.isoformat(),
-                "attributes": row.attributes,
+                "attributes": attributes,
                 "ingested_at": row.ingested_at.isoformat(sep=" ", timespec="minutes"),
                 "is_late": row.is_late,
             }
-            for row in snapshots
+            for row, attributes in zip(snapshots, masked_snapshots)
         ],
+        "retracted": is_retracted,
     }
 
 

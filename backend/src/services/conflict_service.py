@@ -10,9 +10,15 @@ from sqlalchemy.orm import Session
 from src.algorithms.normalization import canonical_value
 from src.constants.conflict_status import CONFLICT_STATUS_LABELS, STRATEGY_LABELS, ConflictStatus, ResolutionStrategy
 from src.constants.customer_attribute import ATTRIBUTES
-from src.constants.messages import MSG_CONFLICT_CLOSED, MSG_CONFLICT_NOT_FOUND, MSG_CONFLICT_VALUE_INVALID
+from src.constants.messages import (
+    MSG_CONFLICT_CLOSED,
+    MSG_CONFLICT_NOT_FOUND,
+    MSG_CONFLICT_RETRACTED,
+    MSG_CONFLICT_VALUE_INVALID,
+)
 from src.models.conflict_item import ConflictItem
 from src.models.merge_rule import MergeRule
+from src.services import privacy
 from src.utils.pagination import Pagination, as_page
 
 ATTRIBUTE_BY_KEY = {attribute["key"]: attribute for attribute in ATTRIBUTES}
@@ -23,8 +29,11 @@ VERDICT_LABELS = {
 }
 
 
-def _payload(row: ConflictItem, display_name: str = "", normalization: str = "direct") -> dict:
+def _payload(row: ConflictItem, display_name: str = "", normalization: str = "direct", retracted_keys: set[str] | None = None) -> dict:
     resolution = row.resolution or {}
+    candidates = row.candidates or []
+    if retracted_keys and row.business_key in retracted_keys:
+        candidates, resolution = privacy.mask_conflict_item(row.attribute_key, candidates, resolution)
     return {
         "id": row.id,
         "business_key": row.business_key,
@@ -32,7 +41,7 @@ def _payload(row: ConflictItem, display_name: str = "", normalization: str = "di
         "display_name": display_name or ATTRIBUTE_BY_KEY.get(row.attribute_key, {}).get("label", row.attribute_key),
         "normalization": normalization,
         "snapshot_date": row.snapshot_date.isoformat(),
-        "candidates": row.candidates or [],
+        "candidates": candidates,
         "verdict": row.verdict,
         "verdict_label": VERDICT_LABELS.get(row.verdict, row.verdict),
         "similarity": row.similarity,
@@ -58,9 +67,12 @@ def list_conflicts(db: Session, status: str, pagination: Pagination) -> dict:
         .all()
     )
     items = []
+    retracted = privacy.confirmed_retraction_keys(db)
     for row in rows:
         rule = rules.get(row.attribute_key)
-        items.append(_payload(row, rule.display_name if rule else "", rule.normalization if rule else "direct"))
+        items.append(
+            _payload(row, rule.display_name if rule else "", rule.normalization if rule else "direct", retracted)
+        )
     return as_page(items, int(total), pagination)
 
 
@@ -104,6 +116,10 @@ def resolve(
     row = get_conflict(db, conflict_id)
     if row.status != ConflictStatus.OPEN.value:
         raise HTTPException(status_code=409, detail=MSG_CONFLICT_CLOSED)
+    if row.business_key in privacy.confirmed_retraction_keys(db):
+        # 已撤回客户的个人信息已隐藏：候选值不再是原值，人工裁决会把个人信息
+        # 重新写入冲突留痕，因此这项裁决必须拒绝。
+        raise HTTPException(status_code=409, detail=MSG_CONFLICT_RETRACTED)
     rule = db.execute(select(MergeRule).where(MergeRule.attribute_key == row.attribute_key)).scalar_one_or_none()
     normalization = rule.normalization if rule else "direct"
 

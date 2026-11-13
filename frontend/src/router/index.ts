@@ -11,6 +11,7 @@ const router = createRouter({
     { path: '/dims/current', name: 'current', component: () => import('@/pages/CurrentDimPage.vue') },
     { path: '/dims/as-of', name: 'as-of', component: () => import('@/pages/AsOfPage.vue') },
     { path: '/conflicts', name: 'conflicts', component: () => import('@/pages/ConflictsPage.vue') },
+    { path: '/retractions', name: 'retractions', component: () => import('@/pages/RetractionPage.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/dims/current' },
   ],
   scrollBehavior: () => ({ top: 0 }),

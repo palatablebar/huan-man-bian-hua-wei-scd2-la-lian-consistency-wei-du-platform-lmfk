@@ -28,6 +28,7 @@ export interface DimPage extends Paged<DimRow> {
 export interface ChainHistory {
   business_key: string;
   run: BuildRun;
+  retracted: boolean;
   versions: DimRow[];
   conflicts: {
     id: number;

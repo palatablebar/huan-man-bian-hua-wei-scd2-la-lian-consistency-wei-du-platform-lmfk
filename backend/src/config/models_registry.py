@@ -6,6 +6,8 @@ from src.models import (  # noqa: F401
     customer_snapshot,
     dim_customer,
     merge_rule,
+    retraction_backup,
+    retraction_batch,
     source_system,
     user,
 )

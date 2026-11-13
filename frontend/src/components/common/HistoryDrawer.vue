@@ -27,6 +27,10 @@ const emit = defineEmits<{ close: [] }>();
         <p class="small muted" style="margin-bottom: 10px">
           当前批次 #{{ history.run.run_no }} · {{ history.run.label }} · 共 {{ history.versions.length }} 条链
         </p>
+        <p v-if="history.retracted" class="note-line" style="margin-bottom: 10px">
+          该客户已注销并完成撤回：姓名、手机号与归属机构已隐藏（显示为 <span class="mono">***</span>），
+          匿名链号与等级历史仍按监管口径保留。
+        </p>
         <ChainTimeline :versions="history.versions" />
 
         <h3 class="panel__title" style="margin-top: 22px; font-size: 1rem">裁决记录</h3>
